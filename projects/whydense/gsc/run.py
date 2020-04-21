@@ -176,7 +176,8 @@ def train(config, experiments, num_cpus, num_gpus, redis_address, show_list):
     if redis_address is not None:
         ray.init(redis_address=redis_address, include_webui=True)
     else:
-        ray.init(num_cpus=num_cpus, num_gpus=num_gpus, local_mode=num_cpus == 1)
+        #ray.init(num_cpus=num_cpus, num_gpus=num_gpus, local_mode= num_cpus == 1)
+        ray.init(num_cpus=num_cpus, num_gpus=num_gpus, local_mode=True) #num_cpus == 1)
 
     # Run experiments
     gpu_percent = 0

@@ -23,9 +23,11 @@ import math
 import numpy as np
 import torch
 import torch.nn as nn
+#import pdb
 
 from nupic.research.frameworks.pytorch.model_utils import count_nonzero_params
 from nupic.torch.modules.sparse_weights import SparseWeights, SparseWeights2d
+
 
 
 def select_random_blocks(num_blocks, num_zero_blocks, verbose=False):
@@ -66,6 +68,40 @@ def consolidated_zero_indices(input_size, percent_on, zero_blocks=None,
 
     indices_in_zero_blocks = [b * 64 + off for b in zero_blocks for off in range(64)]
     indices_in_nonzero_blocks = [b * 64 + off
+                                 for b in non_zero_blocks for off in range(64)]
+    zero_indices_in_nonzero_blocks = np.random.permutation(
+        indices_in_nonzero_blocks)[:num_zero_bits_in_nonzero_blocks]
+
+    indices = indices_in_zero_blocks + list(zero_indices_in_nonzero_blocks)
+    indices.sort()
+    return np.array(indices)
+
+def rotated_consolidated_zero_indices(input_size, percent_on, zero_blocks=None,
+                              non_zero_blocks=None):
+    """
+    Return the indices of zero elements for one linear unit. Ensure that we have a
+    large number of runs of 64 elements with all zeros.
+
+    TODO: Currently this only works if input_size is a multiple of 64.
+    """
+    num_blocks = math.ceil(input_size / 64.0)
+
+    # Randomly select which blocks are going to be zero and non-zero
+    if zero_blocks is None:
+        num_zero_blocks = int(num_blocks - (3 * percent_on * num_blocks))
+        zero_blocks, non_zero_blocks = select_random_blocks(num_blocks, num_zero_blocks)
+    else:
+        num_zero_blocks = len(zero_blocks)
+    num_nonzero_blocks = num_blocks - num_zero_blocks
+
+    num_zero_bits_in_nonzero_blocks = num_nonzero_blocks * 64 - round(
+        percent_on * input_size)
+
+    #indices_in_zero_blocks = [b * 64 + off for b in zero_blocks for off in range(64)]
+    indices_in_zero_blocks = [b + off*25 for b in zero_blocks for off in range(64)]
+    # indices_in_nonzero_blocks = [b * 64 + off
+    #                              for b in non_zero_blocks for off in range(64)]
+    indices_in_nonzero_blocks = [b + off*25
                                  for b in non_zero_blocks for off in range(64)]
     zero_indices_in_nonzero_blocks = np.random.permutation(
         indices_in_nonzero_blocks)[:num_zero_bits_in_nonzero_blocks]
@@ -171,6 +207,73 @@ class ConsolidatedSparseWeights2D(SparseWeights2d):
         zero_indices = zero_indices.reshape(-1, 2)
 
         return torch.from_numpy(zero_indices.transpose())
+
+    def rezero_weights(self):
+        zero_idx = (self.zero_weights[0], self.zero_weights[1])
+        self.module.weight.data.view(self.module.out_channels, -1)[zero_idx] = 0.0
+
+
+class RotatedConsolidatedSparseWeights2D(SparseWeights2d):
+    def __init__(self, module, weight_sparsity):
+        """Enforce somewhat blocky weight sparsity on CNN modules Sample usage:
+
+          model = nn.Conv2d(in_channels, out_channels, kernel_size, ...)
+          model = SparseWeights2d(model, 0.4)
+
+        :param module:
+          The module to sparsify the weights
+        :param weight_sparsity:
+          Pct of weights that are allowed to be non-zero in the layer.
+        """
+        super(RotatedConsolidatedSparseWeights2D, self).__init__(module, weight_sparsity)
+        assert isinstance(module, nn.Conv2d)
+
+    def compute_indices(self):
+        print("In RotatedConsolidatedSparseWeights Conv2d")
+        # For each unit, decide which weights are going to be zero
+        in_channels = self.module.in_channels
+        out_channels = self.module.out_channels
+        kernel_size = self.module.kernel_size
+
+        input_size = in_channels * kernel_size[0] * kernel_size[1]
+        num_zeros = int(round((1.0 - self.weight_sparsity) * input_size))
+
+        # Store a set of out_channels/4 blocks.
+        num_blocks = math.ceil(input_size / 64.0)
+        num_zero_blocks = int(num_blocks - (self.weight_sparsity * num_blocks + 2))
+        output_indices = np.arange(out_channels / 4)
+
+        sparse_blocks = [
+            select_random_blocks(num_blocks, num_zero_blocks, False)
+            for _ in output_indices
+        ]
+        #pdb.pdb_trace()
+        output_indices = np.arange(out_channels)
+        input_indices = np.array(
+            [rotated_consolidated_zero_indices(input_size, self.weight_sparsity,
+                                       zero_blocks=sparse_blocks[int(i / 4)][0],
+                                       non_zero_blocks=sparse_blocks[int(i / 4)][1]
+                                       )
+             for i in output_indices],
+            dtype=np.long,
+        )
+
+        # Create tensor indices for all non-zero weights
+        zero_indices = np.empty((out_channels, num_zeros, 2), dtype=np.long)
+        zero_indices[:, :, 0] = output_indices[:, None]
+        zero_indices[:, :, 1] = input_indices
+
+        # for i in range(10):
+        #     for channel in range(0, 8):
+        #         print("channel ", channel, "block", i)
+        #         for j in range(i*64, (i+1)*64):
+        #             print(zero_indices[channel][j], end=" "),
+        #         print()
+        zero_indices = zero_indices.reshape(-1, 2)
+        #foo = zero_indices.transpose()
+
+        return torch.from_numpy(zero_indices.transpose())
+        #return torch.from_numpy(foo)
 
     def rezero_weights(self):
         zero_idx = (self.zero_weights[0], self.zero_weights[1])

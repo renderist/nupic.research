@@ -103,6 +103,7 @@ class SparseSpeechExperiment(object):
                 consolidated_sparse_weights=config.get(
                     "consolidated_sparse_weights", False),
                 use_kwinners_local=config.get("use_kwinner_local", False),
+                rotated_consolidated_sparse_weights=config.get("rotated_consolidated_sparse_weights", False)
             )
 
         elif self.model_type == "resnet9":

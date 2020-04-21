@@ -25,6 +25,7 @@ from nupic.research.frameworks.pytorch.modules import KWinners2dLocal
 from nupic.research.frameworks.pytorch.modules.consolidated_sparse_weights import (
     ConsolidatedSparseWeights,
     ConsolidatedSparseWeights2D,
+    RotatedConsolidatedSparseWeights2D,
 )
 from nupic.torch.modules import (
     Flatten,
@@ -50,6 +51,7 @@ def add_sparse_cnn_layer(
     activation_fct_before_max_pool,
     use_kwinners_local,
     consolidated_sparse_weights,
+    rotated_consolidated_sparse_weights,
 ):
     """Add sparse cnn layer to network.
 
@@ -79,7 +81,10 @@ def add_sparse_cnn_layer(
     )
     if 0 < weight_sparsity < 1.0:
         if consolidated_sparse_weights:
-            sparse_cnn = ConsolidatedSparseWeights2D(cnn, weight_sparsity)
+            if rotated_consolidated_sparse_weights:
+                sparse_cnn = RotatedConsolidatedSparseWeights2D(cnn, weight_sparsity)
+            else:
+                sparse_cnn = ConsolidatedSparseWeights2D(cnn, weight_sparsity)
         else:
             sparse_cnn = SparseWeights2d(cnn, weight_sparsity)
         network.add_module("cnn{}_cnn".format(suffix), sparse_cnn)
@@ -229,6 +234,7 @@ class LeSparseNet(nn.Sequential):
                  consolidated_sparse_weights=False,
                  use_kwinners_local=False,
                  use_softmax=True,
+                 rotated_consolidated_sparse_weights=False,
                  ):
         super(LeSparseNet, self).__init__()
 
@@ -240,6 +246,7 @@ class LeSparseNet(nn.Sequential):
 
             # We only do consolidated weights for the second CNN layer
             csw = (i == 1) and consolidated_sparse_weights
+            rcsw = csw and rotated_consolidated_sparse_weights
             add_sparse_cnn_layer(
                 network=self,
                 suffix=i + 1,
@@ -254,7 +261,8 @@ class LeSparseNet(nn.Sequential):
                 duty_cycle_period=duty_cycle_period,
                 activation_fct_before_max_pool=activation_fct_before_max_pool,
                 use_kwinners_local=use_kwinners_local,
-                consolidated_sparse_weights=csw
+                consolidated_sparse_weights=csw,
+                rotated_consolidated_sparse_weights=rcsw,
             )
 
             # Compute next layer input shape
